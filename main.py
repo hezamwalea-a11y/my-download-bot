@@ -36,7 +36,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(START_MESSAGE, parse_mode="Markdown")
 
 async def download_youtube_via_api(url, status_message, update):
-    """تحميل يوتيوب عبر سيرفر خارجي لتخطي حظر كابتشا السيرفرات"""
     try:
         api_url = "https://cobalt.tools"
         headers = {"Accept": "application/json", "Content-Type": "application/json"}
@@ -115,22 +114,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error: {e}")
         await status_message.edit_text("❌ تعذر تحميل هذا الرابط حالياً. تأكد من جودة الرابط أو أن المحتوى ليس خاصاً.")
 
-# تشغيل البوت بشكل متوافق تماماً مع حلقة أحداث FastAPI
-bot_app = Application.builder().token(TOKEN).build()
-
-@app_web.on_event("startup")
-async def startup_event():
+async def main():
+    if not TOKEN: 
+        logger.error("TELEGRAM_TOKEN missing!")
+        return
+        
+    bot_app = Application.builder().token(TOKEN).build()
     bot_app.add_handler(CommandHandler("start", start))
     bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
     await bot_app.initialize()
     await bot_app.start()
     await bot_app.updater.start_polling()
-    logger.info("⚡ البوت تم تشغيله بنجاح بالخلفية...")
+    logger.info("⚡ Telegram Bot is polling...")
 
-@app_web.on_event("shutdown")
-async def shutdown_event():
-    await bot_app.updater.stop()
-    await bot_app.stop()
+    # تشغيل خادم الويب uvicorn بشكل متوافق برمجياً لـ Render
+    config = uvicorn.Config(app_web, host="0.0.0.0", port=PORT, log_level="info")
+    server = uvicorn.Server(config)
+    await server.serve()
 
 if __name__ == '__main__':
-    uvicorn.run(app_web, host="0.0.0.0", port=PORT)
+    asyncio.run(main())
