@@ -35,20 +35,12 @@ START_MESSAGE = (
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(START_MESSAGE, parse_mode="Markdown")
 
-async def download_youtube_via_api(url, status_message, update, context):
-    """دالة خاصة لتحميل يوتيوب عبر سيرفر خارجي لتخطي حظر Render"""
+async def download_youtube_via_api(url, status_message, update):
+    """تحميل يوتيوب عبر سيرفر خارجي لتخطي حظر كابتشا السيرفرات"""
     try:
-        # استخدام API خارجي مجاني ومفتوح لتحميل فيديوهات يوتيوب بدون حظر
-        api_url = f"https://cobalt.tools"
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
-        data = {
-            "url": url,
-            "videoQuality": "720",
-            "downloadMode": "auto"
-        }
+        api_url = "https://cobalt.tools"
+        headers = {"Accept": "application/json", "Content-Type": "application/json"}
+        data = {"url": url, "videoQuality": "720", "downloadMode": "auto"}
         
         response = requests.post(api_url, json=data, headers=headers, timeout=15)
         res_data = response.json()
@@ -56,7 +48,6 @@ async def download_youtube_via_api(url, status_message, update, context):
         if response.status_code == 200 and "url" in res_data:
             video_download_url = res_data["url"]
             await status_message.delete()
-            # إرسال الفيديو للمستخدم مباشرة عبر الرابط السحابي لتوفير مساحة السيرفر
             await update.message.reply_video(
                 video=video_download_url,
                 caption="✨ تم تحميل فيديو يوتيوب بنجاح لتخطي الحظر! 🎬",
@@ -64,7 +55,7 @@ async def download_youtube_via_api(url, status_message, update, context):
             )
             return True
     except Exception as api_err:
-        logger.error(f"Cobalt API Error: {api_err}")
+        logger.error(f"API Error: {api_err}")
     return False
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -76,12 +67,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_message = await update.message.reply_text("⏳ جاري معالجة الرابط والتحميل السريع... انتظر ثوانٍ 🚀")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="upload_video")
 
-    # إذا كان الرابط من يوتيوب، نستخدم الـ API الخارجي فوراً لتفادي الحظر الموضح بالصورة
     if "youtube.com" in url or "youtu.be" in url:
-        success = await download_youtube_via_api(url, status_message, update, context)
-        if success:
+        if await download_youtube_via_api(url, status_message, update):
             return
-        # إذا فشل الـ API نتركه يحاول بالطريقة العادية كخيار احتياطي
 
     ydl_opts = {
         'format': 'best[ext=mp4]/best', 
@@ -125,21 +113,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             raise FileNotFoundError()
     except Exception as e:
         logger.error(f"Error: {e}")
-        await status_message.edit_text("❌ تعذر تحميل هذا الرابط حالياً. تأكد أن المحتوى عام وليس خاصاً.")
+        await status_message.edit_text("❌ تعذر تحميل هذا الرابط حالياً. تأكد من جودة الرابط أو أن المحتوى ليس خاصاً.")
 
-async def run_bot():
-    if not TOKEN: return
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
-    await app.initialize()
-    await app.updater.start_polling()
-    await app.start()
+# تشغيل البوت بشكل متوافق تماماً مع حلقة أحداث FastAPI
+bot_app = Application.builder().token(TOKEN).build()
 
 @app_web.on_event("startup")
 async def startup_event():
-    asyncio.create_task(run_bot())
+    bot_app.add_handler(CommandHandler("start", start))
+    bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    await bot_app.initialize()
+    await bot_app.start()
+    await bot_app.updater.start_polling()
+    logger.info("⚡ البوت تم تشغيله بنجاح بالخلفية...")
+
+@app_web.on_event("shutdown")
+async def shutdown_event():
+    await bot_app.updater.stop()
+    await bot_app.stop()
 
 if __name__ == '__main__':
     uvicorn.run(app_web, host="0.0.0.0", port=PORT)
