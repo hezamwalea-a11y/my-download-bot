@@ -5,17 +5,27 @@ import asyncio
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import yt_dlp
+from fastapi import FastAPI
+import uvicorn
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
+PORT = int(os.getenv("PORT", 10000))
+
+# إنشاء سيرفر ويب وهمي لإرضاء منصة Render ومنع خطأ الـ Port
+app_web = FastAPI()
+
+@app_web.get("/")
+def read_root():
+    return {"status": "Bot is running perfectly!"}
 
 START_MESSAGE = (
     "**أهلاً بك في أقوى بوت تحميل على تليجرام!** 🔥\n\n"
     "راحت أيام روابط المواقع والإعلانات المزعجة! 🥳 هنا تقدر تحمّل أي فيديو أو صورة من "
     "(تيك توك، إنستغرام، يوتيوب، فيسبوك، و Pinterest) بضغطة واحدة وبأعلى جودة! 🎬✨\n\n"
-    "**كيف تستخدم البوت?**\n"
+    "**كيف تستخدم البوت؟**\n"
     "1️⃣ انسخ رابط الفيديو أو الصورة.\n"
     "2️⃣ أرسل الرابط هنا في المحادثة مباشرة.\n"
     "3️⃣ استلم ملفك خلال ثوانٍ معدودة! ⚡\n\n"
@@ -41,13 +51,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'no_warnings': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
+        'extractor_args': {'youtube': {'player_client': ['android', 'web']}}, # تخطي حظر يوتيوب الحديث
         'headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
         }
     }
 
     try:
-        # تشغيل yt-dlp في خيط منفصل لتفادي تجميد البوت على السيرفر
         loop = asyncio.get_event_loop()
         def download():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -79,25 +89,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error: {e}")
         await status_message.edit_text("❌ تعذر تحميل هذا الرابط حالياً. تأكد من جودة الرابط أو أن المحتوى ليس خاصاً.")
 
-async def main():
+async def run_bot():
     if not TOKEN: 
         logger.error("TELEGRAM_TOKEN missing!")
         return
-    
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    # الإصلاح البرمجي لـ Render: تشغيل البوت بشكل متوافق تماماً مع السيرفرات السحابية
     await app.initialize()
     await app.updater.start_polling()
     await app.start()
-    
-    print("⚡ البوت يعمل الآن بنجاح على استضافة Render المجانية...")
-    # إبقاء البوت حياً ومستجيباً
-    while True:
-        await asyncio.sleep(3600)
+    logger.info("⚡ Telegram Bot is polling...")
+
+@app_web.on_event("startup")
+async def startup_event():
+    # تشغيل البوت في الخلفية مع بداية تشغيل السيرفر
+    asyncio.create_task(run_bot())
 
 if __name__ == '__main__':
-    # تشغيل الدالة الأساسية بشكل متزامن صحيح
-    asyncio.run(main())
+    # تشغيل سيرفر الويب على المنفذ المطلوب لـ Render
+    uvicorn.run(app_web, host="0.0.0.0", port=PORT)
