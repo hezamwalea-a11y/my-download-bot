@@ -2,6 +2,7 @@ import os
 import re
 import logging
 import asyncio
+import requests
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import yt_dlp
@@ -14,7 +15,6 @@ logger = logging.getLogger(__name__)
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 PORT = int(os.getenv("PORT", 10000))
 
-# إنشاء سيرفر ويب وهمي لإرضاء منصة Render ومنع خطأ الـ Port
 app_web = FastAPI()
 
 @app_web.get("/")
@@ -35,6 +35,38 @@ START_MESSAGE = (
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(START_MESSAGE, parse_mode="Markdown")
 
+async def download_youtube_via_api(url, status_message, update, context):
+    """دالة خاصة لتحميل يوتيوب عبر سيرفر خارجي لتخطي حظر Render"""
+    try:
+        # استخدام API خارجي مجاني ومفتوح لتحميل فيديوهات يوتيوب بدون حظر
+        api_url = f"https://cobalt.tools"
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json"
+        }
+        data = {
+            "url": url,
+            "videoQuality": "720",
+            "downloadMode": "auto"
+        }
+        
+        response = requests.post(api_url, json=data, headers=headers, timeout=15)
+        res_data = response.json()
+        
+        if response.status_code == 200 and "url" in res_data:
+            video_download_url = res_data["url"]
+            await status_message.delete()
+            # إرسال الفيديو للمستخدم مباشرة عبر الرابط السحابي لتوفير مساحة السيرفر
+            await update.message.reply_video(
+                video=video_download_url,
+                caption="✨ تم تحميل فيديو يوتيوب بنجاح لتخطي الحظر! 🎬",
+                supports_streaming=True
+            )
+            return True
+    except Exception as api_err:
+        logger.error(f"Cobalt API Error: {api_err}")
+    return False
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
     if not re.match(r'^https?://', url):
@@ -44,6 +76,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_message = await update.message.reply_text("⏳ جاري معالجة الرابط والتحميل السريع... انتظر ثوانٍ 🚀")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="upload_video")
 
+    # إذا كان الرابط من يوتيوب، نستخدم الـ API الخارجي فوراً لتفادي الحظر الموضح بالصورة
+    if "youtube.com" in url or "youtu.be" in url:
+        success = await download_youtube_via_api(url, status_message, update, context)
+        if success:
+            return
+        # إذا فشل الـ API نتركه يحاول بالطريقة العادية كخيار احتياطي
+
     ydl_opts = {
         'format': 'best[ext=mp4]/best', 
         'outtmpl': '/tmp/%(id)s.%(ext)s',
@@ -51,7 +90,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'no_warnings': True,
         'nocheckcertificate': True,
         'geo_bypass': True,
-        'extractor_args': {'youtube': {'player_client': ['android', 'web']}}, # تخطي حظر يوتيوب الحديث
         'headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
         }
@@ -87,12 +125,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             raise FileNotFoundError()
     except Exception as e:
         logger.error(f"Error: {e}")
-        await status_message.edit_text("❌ تعذر تحميل هذا الرابط حالياً. تأكد من جودة الرابط أو أن المحتوى ليس خاصاً.")
+        await status_message.edit_text("❌ تعذر تحميل هذا الرابط حالياً. تأكد أن المحتوى عام وليس خاصاً.")
 
 async def run_bot():
-    if not TOKEN: 
-        logger.error("TELEGRAM_TOKEN missing!")
-        return
+    if not TOKEN: return
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
@@ -100,13 +136,10 @@ async def run_bot():
     await app.initialize()
     await app.updater.start_polling()
     await app.start()
-    logger.info("⚡ Telegram Bot is polling...")
 
 @app_web.on_event("startup")
 async def startup_event():
-    # تشغيل البوت في الخلفية مع بداية تشغيل السيرفر
     asyncio.create_task(run_bot())
 
 if __name__ == '__main__':
-    # تشغيل سيرفر الويب على المنفذ المطلوب لـ Render
     uvicorn.run(app_web, host="0.0.0.0", port=PORT)
